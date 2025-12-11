@@ -9,17 +9,16 @@
 #include <map>
 #include <set>
 
-// Channel opt-in flag
-static constexpr const char* EXT_AUTOVOICE = "BS_AUTOVOICE";
-
 struct UserStats
 {
-	time_t first_seen = 0;
-	size_t messages = 0;
-	bool voiced = false;
+	time_t first_seen;
+	size_t messages;
+	bool voiced;
+
+	UserStats() : first_seen(0), messages(0), voiced(false) { }
 };
 
-class CommandBSSetAutovoice final : public Command
+class CommandBSSetAutovoice : public Command
 {
 	SerializableExtensibleItem<bool>& autovoice;
 
@@ -32,7 +31,7 @@ class CommandBSSetAutovoice final : public Command
 		this->SetSyntax(_("\037channel\037 {\037ON|OFF\037}"));
 	}
 
-	void Execute(CommandSource& source, const std::vector<Anope::string>& params) anope_override
+	void Execute(CommandSource& source, const std::vector<Anope::string>& params)
 	{
 		ChannelInfo* ci = ChannelInfo::Find(params[0]);
 		const Anope::string& value = params[1];
@@ -75,7 +74,7 @@ class CommandBSSetAutovoice final : public Command
 			this->OnSyntaxError(source, source.command);
 	}
 
-	bool OnHelp(CommandSource& source, const Anope::string&) anope_override
+	bool OnHelp(CommandSource& source, const Anope::string&)
 	{
 		this->SendSyntax(source);
 		source.Reply(_(" \n"
@@ -85,7 +84,7 @@ class CommandBSSetAutovoice final : public Command
 	}
 };
 
-class BSAutoVoiceActivity final : public Module
+class BSAutoVoiceActivity : public Module
 {
 private:
 	SerializableExtensibleItem<bool> autovoice;
@@ -94,9 +93,9 @@ private:
 	/* channel name -> (user uuid -> stats) */
 	std::map<Anope::string, std::map<Anope::string, UserStats> > stats;
 
-	time_t min_duration = 120;      // seconds
-	size_t min_messages = 5;        // messages
-	bool require_account = false;   // only act on registered users
+	time_t min_duration;      // seconds
+	size_t min_messages;        // messages
+	bool require_account;   // only act on registered users
 	std::set<Anope::string> limit_channels; // optional: if non-empty, only act on these chans
 
 	bool ShouldTrack(Channel *c, User *u)
@@ -159,7 +158,7 @@ private:
 
 	void TouchStats(Channel *c, User *u, bool bump_messages)
 	{
-		UserStats &st = stats[c->ci->name][u->uuid];
+		UserStats &st = stats[c->ci->name][u->GetUID()];
 		if (!st.first_seen)
 			st.first_seen = Anope::CurTime;
 		if (bump_messages)
@@ -169,11 +168,11 @@ private:
 
 	void Cleanup(Channel *c, User *u)
 	{
-		auto cit = stats.find(c->ci->name);
+		std::map<Anope::string, std::map<Anope::string, UserStats> >::iterator cit = stats.find(c->ci->name);
 		if (cit == stats.end())
 			return;
 
-		cit->second.erase(u->uuid);
+		cit->second.erase(u->GetUID());
 		if (cit->second.empty())
 			stats.erase(cit);
 	}
@@ -181,14 +180,17 @@ private:
 public:
 	BSAutoVoiceActivity(const Anope::string &modname, const Anope::string &creator)
 		: Module(modname, creator, VENDOR)
-		, autovoice(this, EXT_AUTOVOICE)
+		, autovoice(this, "BS_AUTOVOICE")
 		, command(this, autovoice)
 	{
+		min_duration = 120;
+		min_messages = 5;
+		require_account = false;
 	}
 
-	void OnReload(Configuration::Conf *config) anope_override
+	void OnReload(Configuration::Conf *config)
 	{
-		const auto *tag = config->GetModule(this);
+		const ConfigBlock *tag = config->GetModule(this);
 		min_duration = tag->Get<time_t>("min_duration", "120");
 		min_messages = tag->Get<size_t>("min_messages", "5");
 		require_account = tag->Get<bool>("require_account", "false");
@@ -209,34 +211,35 @@ public:
 		          << " channels=" << (limit_channels.empty() ? "ALL" : "custom");
 	}
 
-	void OnJoinChannel(User *u, Channel *c) anope_override
+	void OnJoinChannel(User *u, Channel *c)
 	{
 		if (!ShouldTrack(c, u))
 			return;
 		TouchStats(c, u, false);
 	}
 
-	void OnPrivmsg(User *u, Channel *c, Anope::string &) anope_override
+	void OnPrivmsg(User *u, Channel *c, Anope::string &)
 	{
 		if (!ShouldTrack(c, u))
 			return;
 		TouchStats(c, u, true);
 	}
 
-	void OnLeaveChannel(User *u, Channel *c) anope_override
+	void OnLeaveChannel(User *u, Channel *c)
 	{
 		if (!c || !c->ci)
 			return;
 		Cleanup(c, u);
 	}
 
-	void OnUserQuit(User *u, const Anope::string &) anope_override
+	void OnUserQuit(User *u, const Anope::string &)
 	{
 		if (!u)
 			return;
-		for (auto it = stats.begin(); it != stats.end(); )
+		std::map<Anope::string, std::map<Anope::string, UserStats> >::iterator it = stats.begin();
+		while (it != stats.end())
 		{
-			it->second.erase(u->uuid);
+			it->second.erase(u->GetUID());
 			if (it->second.empty())
 				it = stats.erase(it);
 			else
