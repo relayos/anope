@@ -190,13 +190,13 @@ public:
 
 	void OnReload(Configuration::Conf *config)
 	{
-		const Config::Block *tag = config->GetModule(this);
+		Configuration::Block *tag = config->GetModule(this);
 		min_duration = tag->Get<time_t>("min_duration", 120);
 		min_messages = tag->Get<unsigned>("min_messages", 5);
 		require_account = tag->Get<bool>("require_account", false);
 
 		limit_channels.clear();
-		Anope::string chans = tag->Get<Anope::string>("channels");
+		Anope::string chans = tag->Get<const Anope::string>("channels");
 		if (!chans.empty())
 		{
 			spacesepstream sep(chans);
